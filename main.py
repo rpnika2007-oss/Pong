@@ -32,13 +32,24 @@ RUSSIAN_KEYS = {
 }
 WINDOWS_LETTER_KEYS = {0x57: "w", 0x53: "s", 0x52: "r"}
 
-BACKGROUND = "#101621"
-FIELD_COLOR = "#171f2d"
-BORDER = "#344358"
-TEXT = "#f1f5ff"
-MUTED = "#aab9ce"
+BACKGROUND = "#ffffff"
+FIELD_COLOR = "#fce4ee"
+BALL_COLOR = "#a81756"
+BALL_OUTLINE = "#8f194c"
+TEXT = "#29222a"
+MUTED = "#63535e"
 LEFT_COLOR = "#66e0cd"
 RIGHT_COLOR = "#ffae91"
+LEFT_LABEL_COLOR = "#255b53"
+RIGHT_LABEL_COLOR = "#864c36"
+PINK_BORDER = "#d8aebf"
+PINK_SURFACE = "#fff6fa"
+PINK_BUTTON = "#fbe2ec"
+PINK_START = "#f8cfe0"
+PINK_HOVER = "#f6c8dc"
+PINK_PRESSED = "#efb5ce"
+PINK_DISABLED = "#f9f1f5"
+FONT_FAMILY = "Century Gothic"
 
 
 class GameModel:
@@ -188,23 +199,28 @@ class GameRenderer:
         )
         canvas.create_line(
             center_x, FIELD_TOP + 1, center_x, bottom - 1,
-            fill=BORDER, width=2, dash=(5, 8),
+            fill=PINK_BORDER, width=2, dash=(5, 8),
         )
         canvas.create_rectangle(
-            1, FIELD_TOP, FIELD_WIDTH - 1, bottom - 1, outline=BORDER
+            1, FIELD_TOP, FIELD_WIDTH - 1, bottom - 1, outline=BALL_OUTLINE
         )
 
+        canvas.create_rectangle(
+            center_x - 151, 2, center_x + 151, FIELD_TOP - 7,
+            fill=PINK_SURFACE, outline=PINK_BORDER,
+        )
+        canvas.create_line(center_x, 12, center_x, FIELD_TOP - 17, fill=PINK_BORDER)
         self.score_items = []
         for x, number, color in (
-            (center_x - 78, 1, LEFT_COLOR),
-            (center_x + 78, 2, RIGHT_COLOR),
+            (center_x - 75, 1, LEFT_LABEL_COLOR),
+            (center_x + 75, 2, RIGHT_LABEL_COLOR),
         ):
             canvas.create_text(
-                x, 10, text=f"ИГРОК {number}", fill=color,
-                font=("Segoe UI", 9, "bold"),
+                x, 13, text=f"ИГРОК {number}", fill=color,
+                font=(FONT_FAMILY, -12, "bold"),
             )
             item = canvas.create_text(
-                x, 39, fill=TEXT, font=("Segoe UI", 31, "bold")
+                x, 41, fill=TEXT, font=(FONT_FAMILY, -27, "bold")
             )
             self.score_items.append(item)
 
@@ -212,19 +228,19 @@ class GameRenderer:
             canvas.create_rectangle(0, 0, 0, 0, fill=color, outline="")
             for color in (LEFT_COLOR, RIGHT_COLOR)
         ]
-        self.ball = canvas.create_oval(0, 0, 0, 0, fill=TEXT, outline="")
+        self.ball = canvas.create_oval(0, 0, 0, 0, fill=BALL_COLOR, outline=BALL_OUTLINE)
         center_y = FIELD_TOP + FIELD_HEIGHT / 2
         canvas.create_rectangle(
             center_x - 190, center_y - 48, center_x + 190, center_y + 48,
-            fill=BACKGROUND, outline=BORDER, tags="overlay",
+            fill=BACKGROUND, outline=PINK_BORDER, tags="overlay",
         )
         self.message = canvas.create_text(
             center_x, center_y - 13, fill=TEXT, tags="overlay",
-            font=("Segoe UI", 21, "bold"),
+            font=(FONT_FAMILY, 21, "bold"),
         )
         self.hint = canvas.create_text(
             center_x, center_y + 20, fill=MUTED, tags="overlay",
-            font=("Segoe UI", 10),
+            font=(FONT_FAMILY, 10),
         )
 
     def draw(self, model, state):
@@ -286,33 +302,34 @@ class App:
         self._tick()
 
     def _build_interface(self):
+        self.root.option_add("*TCombobox*Listbox.font", (FONT_FAMILY, 10))
         style = ttk.Style(self.root)
         style.theme_use("clam")
         style.configure(
-            "TButton", font=("Segoe UI", 10, "bold"), padding=(13, 7),
-            background="#243248", foreground=TEXT, bordercolor=BORDER,
-            focuscolor=BORDER,
+            "TButton", font=(FONT_FAMILY, 10, "bold"), padding=(13, 7),
+            background=PINK_BUTTON, foreground=TEXT, bordercolor=PINK_BORDER,
+            lightcolor=PINK_BORDER, darkcolor=PINK_BORDER, focuscolor="#87566b",
         )
+        button_colors = [
+            ("disabled", PINK_DISABLED), ("pressed", PINK_PRESSED),
+            ("active", PINK_HOVER),
+        ]
         style.map(
-            "TButton", background=[("active", "#314460")],
-            foreground=[("disabled", "#8291a7")],
+            "TButton", background=button_colors,
+            foreground=[("disabled", MUTED)],
         )
+        style.configure("Start.TButton", background=PINK_START)
         style.configure(
-            "Start.TButton", background=LEFT_COLOR, foreground="#102322"
-        )
-        style.map(
-            "Start.TButton",
-            background=[("disabled", "#243248"), ("active", "#9af0e4")],
-        )
-        style.configure(
-            "TCombobox", foreground=TEXT, fieldbackground="#243248",
-            background="#243248", arrowcolor=TEXT, padding=4,
+            "TCombobox", foreground=TEXT, fieldbackground=PINK_SURFACE,
+            background=PINK_BUTTON, arrowcolor=TEXT, bordercolor=PINK_BORDER,
+            lightcolor=PINK_BORDER, darkcolor=PINK_BORDER, padding=4,
         )
         style.map(
             "TCombobox",
-            fieldbackground=[("readonly", "#243248"), ("disabled", "#1b2535")],
-            foreground=[("disabled", "#8291a7")],
-            selectbackground=[("readonly", "#243248")],
+            background=button_colors,
+            fieldbackground=[("disabled", PINK_DISABLED), ("readonly", PINK_SURFACE)],
+            foreground=[("disabled", MUTED)],
+            selectbackground=[("readonly", PINK_SURFACE)],
             selectforeground=[("readonly", TEXT)],
         )
 
@@ -320,11 +337,11 @@ class App:
         header.pack(fill="x", padx=30, pady=(14, 6))
         tk.Label(
             header, text="Пинг-понг", bg=BACKGROUND, fg=TEXT,
-            font=("Segoe UI", 24, "bold"),
+            font=(FONT_FAMILY, 24, "bold"),
         ).pack(side="left")
         tk.Label(
             header, text="Двое игроков · до 5 очков", bg=BACKGROUND,
-            fg=MUTED, font=("Segoe UI", 10),
+            fg=MUTED, font=(FONT_FAMILY, 10),
         ).pack(side="right")
 
         toolbar = tk.Frame(self.root, bg=BACKGROUND)
@@ -343,12 +360,12 @@ class App:
         ).pack(side="left")
         self.difficulty_box = ttk.Combobox(
             toolbar, textvariable=self.difficulty, values=tuple(START_SPEEDS),
-            state="readonly", width=10, font=("Segoe UI", 10),
+            state="readonly", width=10, font=(FONT_FAMILY, 10),
         )
         self.difficulty_box.pack(side="right")
         tk.Label(
             toolbar, text="Сложность", bg=BACKGROUND, fg=MUTED,
-            font=("Segoe UI", 10),
+            font=(FONT_FAMILY, 10),
         ).pack(side="right", padx=10)
 
         self.canvas = tk.Canvas(
@@ -361,13 +378,13 @@ class App:
         footer = tk.Frame(self.root, bg=BACKGROUND)
         footer.pack(fill="x", padx=30, pady=(13, 0))
         for label, color, side in (
-            ("Игрок 1   W / S", LEFT_COLOR, "left"),
-            ("Игрок 2   ↑ / ↓", RIGHT_COLOR, "left"),
+            ("Игрок 1   W / S", LEFT_LABEL_COLOR, "left"),
+            ("Игрок 2   ↑ / ↓", RIGHT_LABEL_COLOR, "left"),
             ("Пробел — пауза    R — заново", MUTED, "right"),
         ):
             tk.Label(
                 footer, text=label, bg=BACKGROUND, fg=color,
-                font=("Segoe UI", 10),
+                font=(FONT_FAMILY, 10),
             ).pack(side=side, padx=(0, 24) if side == "left" else 0)
 
     def _start(self):
