@@ -1,6 +1,7 @@
 
 import math
 import random
+import time
 import tkinter as tk
 from tkinter import ttk
 
@@ -12,9 +13,14 @@ PADDLE_WIDTH = 12
 PADDLE_HEIGHT = 76
 PADDLE_MARGIN = 22
 PADDLE_SPEED = 7
+PADDLE_LEFTS = (PADDLE_MARGIN, FIELD_WIDTH - PADDLE_MARGIN - PADDLE_WIDTH)
 BALL_RADIUS = 8
 WINNING_SCORE = 5
 FRAME_MS = 16
+FRAME_NS = FRAME_MS * 1_000_000
+MAX_CATCH_UP_STEPS = 8
+SERVE_DELAY_STEPS = math.ceil(1000 / FRAME_MS)
+PADDLE_START_Y = (FIELD_HEIGHT - PADDLE_HEIGHT) / 2
 
 START_SPEEDS = {"Лёгкая": 5.0, "Средняя": 6.3, "Сложная": 7.6}
 MAX_BALL_SPEED = 11.0
@@ -47,7 +53,8 @@ class GameModel:
         self.start_speed = start_speed
         self.scores = [0, 0]
         self.winner = None
-        self.paddle_y = [(FIELD_HEIGHT - PADDLE_HEIGHT) / 2] * 2
+        self.paddle_y = [PADDLE_START_Y] * 2
+        self.serve_steps_remaining = 0
         self._serve(random.choice((-1, 1)))
 
     def _serve(self, direction):
@@ -63,63 +70,90 @@ class GameModel:
         if self.winner is not None:
             return
 
+        paddle_starts = self.paddle_y.copy()
         for player, direction in enumerate((left_direction, right_direction)):
             new_y = self.paddle_y[player] + direction * PADDLE_SPEED
             self.paddle_y[player] = min(
                 FIELD_HEIGHT - PADDLE_HEIGHT, max(0, new_y)
             )
 
-        old_x = self.ball_x
-        old_y = self.ball_y
-        incoming_dy = self.ball_dy
-        self.ball_x += self.ball_dx
-        next_y = old_y + incoming_dy
-        self.ball_y = self._reflect_wall(next_y)
+        if self.serve_steps_remaining:
+            self.serve_steps_remaining -= 1
+            return
 
-        if next_y <= BALL_RADIUS:
-            self.ball_dy = abs(self.ball_dy)
-        elif next_y >= FIELD_HEIGHT - BALL_RADIUS:
-            self.ball_dy = -abs(self.ball_dy)
-       
-        target = 0 if self.ball_dx < 0 else 1
-        self._check_paddle(target, old_x, old_y, incoming_dy)
+        elapsed = 0.0
+        while elapsed < 1:
+            target = 0 if self.ball_dx < 0 else 1
+            paddle_dy = self.paddle_y[target] - paddle_starts[target]
+            paddle_top = paddle_starts[target] + elapsed * paddle_dy
+            wall_y = BALL_RADIUS if self.ball_dy < 0 else FIELD_HEIGHT - BALL_RADIUS
+            wall_time = (
+                (wall_y - self.ball_y) / self.ball_dy if self.ball_dy else math.inf
+            )
+            remaining = 1 - elapsed
+            paddle_time = self._paddle_contact_time(
+                target, paddle_top, paddle_dy, min(remaining, wall_time)
+            )
+            travel_time = min(remaining, wall_time, paddle_time)
+            self.ball_x += self.ball_dx * travel_time
+            self.ball_y += self.ball_dy * travel_time
+            elapsed += travel_time
+
+            if travel_time == wall_time:
+                self.ball_y = wall_y
+            if travel_time == paddle_time:
+                contact_top = paddle_top + paddle_dy * travel_time
+                self._bounce(target, self.ball_y - contact_top - PADDLE_HEIGHT / 2)
+            elif travel_time == wall_time:
+                self.ball_dy = -self.ball_dy
 
         if self.ball_x + BALL_RADIUS <= 0:
             self._score(1, -1)
         elif self.ball_x - BALL_RADIUS >= FIELD_WIDTH:
             self._score(0, 1)
 
-    @staticmethod
-    def _reflect_wall(y):
-        if y < BALL_RADIUS:
-            return 2 * BALL_RADIUS - y
-        lower_wall = FIELD_HEIGHT - BALL_RADIUS
-        if y > lower_wall:
-            return 2 * lower_wall - y
-        return y
+    def _paddle_contact_time(self, player, top, paddle_dy, limit):
+        """Найдите первый контакт круга с ракеткой в её системе отсчёта."""
+        left = PADDLE_LEFTS[player]
+        right = left + PADDLE_WIDTH
+        x, y = self.ball_x, self.ball_y - top
+        dx, dy = self.ball_dx, self.ball_dy - paddle_dy
+        if not dx:
+            return math.inf
+        front = right + BALL_RADIUS if player == 0 else left - BALL_RADIUS
+        front_time = (front - x) / dx
+        if front_time > limit:
+            return math.inf
 
-    def _check_paddle(self, player, old_x, old_y, incoming_dy):
-        left_contact = PADDLE_MARGIN + PADDLE_WIDTH + BALL_RADIUS
-        if player == 0:
-            contact_x = left_contact
-            crossed = self.ball_x <= contact_x < old_x
-        else:
-            contact_x = FIELD_WIDTH - left_contact
-            crossed = old_x < contact_x <= self.ball_x
-        if not crossed:
-            return
+        contact = math.inf
+        if 0 <= front_time and 0 <= y + dy * front_time <= PADDLE_HEIGHT:
+            contact = front_time
 
-        fraction = (contact_x - old_x) / self.ball_dx
-        contact_y = self._reflect_wall(old_y + fraction * incoming_dy)
-        top = self.paddle_y[player]
-        if not (
-            top - BALL_RADIUS <= contact_y <= top + PADDLE_HEIGHT + BALL_RADIUS
-        ):
-            return
+        if dy:
+            edge_y = -BALL_RADIUS if dy > 0 else PADDLE_HEIGHT + BALL_RADIUS
+            edge_time = (edge_y - y) / dy
+            if 0 <= edge_time <= limit and left <= x + dx * edge_time <= right:
+                contact = min(contact, edge_time)
 
-        self.ball_x = contact_x
-        self.ball_y = contact_y
-        self._bounce(player, contact_y - (top + PADDLE_HEIGHT / 2))
+        speed_squared = dx * dx + dy * dy
+        for corner_x, x_side in ((left, -1), (right, 1)):
+            for corner_y, y_side in ((0, -1), (PADDLE_HEIGHT, 1)):
+                offset_x, offset_y = x - corner_x, y - corner_y
+                projection = offset_x * dx + offset_y * dy
+                distance_squared = offset_x * offset_x + offset_y * offset_y
+                discriminant = projection**2 - speed_squared * (
+                    distance_squared - BALL_RADIUS**2
+                )
+                if projection >= 0 or discriminant < 0:
+                    continue
+                hit = (-projection - math.sqrt(discriminant)) / speed_squared
+                if (
+                    0 <= hit <= limit
+                    and (offset_x + dx * hit) * x_side >= 0
+                    and (offset_y + dy * hit) * y_side >= 0
+                ):
+                    contact = min(contact, hit)
+        return contact
 
     def _bounce(self, player, offset):
         # Попадание в центр даёт прямой отскок, попадание в край — до 60°.
@@ -132,9 +166,12 @@ class GameModel:
 
     def _score(self, player, serve_direction):
         self.scores[player] += 1
+        self._serve(serve_direction)
         if self.scores[player] == WINNING_SCORE:
             self.winner = player + 1
-        self._serve(serve_direction)
+            return
+        self.paddle_y = [PADDLE_START_Y] * 2
+        self.serve_steps_remaining = SERVE_DELAY_STEPS
 
 
 class GameRenderer:
@@ -192,9 +229,7 @@ class GameRenderer:
 
     def draw(self, model, state):
         """Обновите координаты, счёт и сообщение на игровом поле."""
-        left_x = PADDLE_MARGIN
-        right_x = FIELD_WIDTH - PADDLE_MARGIN - PADDLE_WIDTH
-        for player, x in enumerate((left_x, right_x)):
+        for player, x in enumerate(PADDLE_LEFTS):
             y = FIELD_TOP + model.paddle_y[player]
             self.canvas.coords(
                 self.paddles[player], x, y, x + PADDLE_WIDTH, y + PADDLE_HEIGHT
@@ -208,12 +243,13 @@ class GameRenderer:
             self.ball, x - BALL_RADIUS, y - BALL_RADIUS,
             x + BALL_RADIUS, y + BALL_RADIUS,
         )
-        if state == "playing":
+        if state == "playing" and not model.serve_steps_remaining:
             self.canvas.itemconfigure("overlay", state="hidden")
             return
 
         titles = {
             "ready": ("До пяти очков", "Выберите сложность и начните игру"),
+            "playing": ("Следующая подача", "Можно переместить ракетки"),
             "paused": ("Пауза", "Нажмите пробел, чтобы продолжить"),
             "finished": (
                 f"Победил игрок {model.winner}",
@@ -238,7 +274,6 @@ class App:
         self.root.configure(bg=BACKGROUND)
 
         self.model = GameModel()
-        self.state = "ready"
         self.pressed_keys = set()
         self.window_system = self.root.tk.call("tk", "windowingsystem")
         self.difficulty = tk.StringVar(value="Средняя")
@@ -247,7 +282,7 @@ class App:
         self.root.bind("<KeyRelease>", self._key_released)
         self.root.bind("<FocusOut>", self._focus_lost)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
-        self._refresh()
+        self._set_state("ready")
         self._tick()
 
     def _build_interface(self):
@@ -339,24 +374,28 @@ class App:
         self.model.reset(START_SPEEDS[self.difficulty.get()])
         self.pressed_keys.clear()
         self.canvas.focus_set()
-        self.state = "playing"
-        self._refresh()
+        self._set_state("playing")
 
     def _reset(self):
         self.model.reset(START_SPEEDS[self.difficulty.get()])
         self.pressed_keys.clear()
         self.canvas.focus_set()
-        self.state = "ready"
-        self._refresh()
+        self._set_state("ready")
 
     def _toggle_pause(self):
         if self.state == "playing":
-            self.state = "paused"
+            next_state = "paused"
         elif self.state == "paused":
-            self.state = "playing"
+            next_state = "playing"
         else:
             return
         self.canvas.focus_set()
+        self._set_state(next_state)
+
+    def _set_state(self, state):
+        self.state = state
+        self._last_tick_ns = time.monotonic_ns()
+        self._pending_ns = 0
         self._refresh()
 
     def _refresh(self):
@@ -393,9 +432,21 @@ class App:
         self.pressed_keys.discard(self._game_key(event))
 
     def _focus_lost(self, event):
+        # Дождитесь завершения смены фокуса, в том числе между виджетами.
+        self.root.after_idle(self._pause_if_unfocused)
+
+    def _pause_if_unfocused(self):
+        if self.root.focus_get() is not None:
+            return
         self.pressed_keys.clear()
+        if self.state == "playing":
+            self._set_state("paused")
 
     def _tick(self):
+        now = time.monotonic_ns()
+        elapsed = now - self._last_tick_ns
+        self._last_tick_ns = now
+
         if self.state == "playing":
             left = (
                 int("s" in self.pressed_keys) - int("w" in self.pressed_keys)
@@ -404,12 +455,17 @@ class App:
                 int("down" in self.pressed_keys)
                 - int("up" in self.pressed_keys)
             )
-            self.model.step(left, right)
-            if self.model.winner is None:
+            self._pending_ns = min(
+                self._pending_ns + elapsed, MAX_CATCH_UP_STEPS * FRAME_NS
+            )
+            while self._pending_ns >= FRAME_NS:
+                self._pending_ns -= FRAME_NS
+                self.model.step(left, right)
+                if self.model.winner is not None:
+                    self._set_state("finished")
+                    break
+            if self.state == "playing":
                 self.renderer.draw(self.model, self.state)
-            else:
-                self.state = "finished"
-                self._refresh()
 
         self.frame_id = self.root.after(FRAME_MS, self._tick)
 
