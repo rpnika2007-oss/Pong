@@ -38,10 +38,8 @@ BALL_COLOR = "#a81756"
 BALL_OUTLINE = "#8f194c"
 TEXT = "#29222a"
 MUTED = "#63535e"
-LEFT_COLOR = "#66e0cd"
-RIGHT_COLOR = "#ffae91"
-LEFT_LABEL_COLOR = "#255b53"
-RIGHT_LABEL_COLOR = "#864c36"
+LEFT_COLOR = "#b34569"
+RIGHT_COLOR = "#773575"
 PINK_BORDER = "#d8aebf"
 PINK_SURFACE = "#fff6fa"
 PINK_BUTTON = "#fbe2ec"
@@ -212,15 +210,15 @@ class GameRenderer:
         canvas.create_line(center_x, 12, center_x, FIELD_TOP - 17, fill=PINK_BORDER)
         self.score_items = []
         for x, number, color in (
-            (center_x - 75, 1, LEFT_LABEL_COLOR),
-            (center_x + 75, 2, RIGHT_LABEL_COLOR),
+            (center_x - 75, 1, LEFT_COLOR),
+            (center_x + 75, 2, RIGHT_COLOR),
         ):
             canvas.create_text(
                 x, 13, text=f"ИГРОК {number}", fill=color,
                 font=(FONT_FAMILY, -12, "bold"),
             )
             item = canvas.create_text(
-                x, 41, fill=TEXT, font=(FONT_FAMILY, -27, "bold")
+                x, 41, fill=color, font=(FONT_FAMILY, -27, "bold")
             )
             self.score_items.append(item)
 
@@ -378,8 +376,8 @@ class App:
         footer = tk.Frame(self.root, bg=BACKGROUND)
         footer.pack(fill="x", padx=30, pady=(13, 0))
         for label, color, side in (
-            ("Игрок 1   W / S", LEFT_LABEL_COLOR, "left"),
-            ("Игрок 2   ↑ / ↓", RIGHT_LABEL_COLOR, "left"),
+            ("Игрок 1   W / S", LEFT_COLOR, "left"),
+            ("Игрок 2   ↑ / ↓", RIGHT_COLOR, "left"),
             ("Пробел — пауза    R — заново", MUTED, "right"),
         ):
             tk.Label(
