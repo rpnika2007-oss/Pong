@@ -1,5 +1,6 @@
 import math
 import unittest
+from tkinter import ttk
 from unittest.mock import Mock, patch
 
 from main import (
@@ -9,7 +10,9 @@ from main import (
     FRAME_NS,
     MAX_CATCH_UP_STEPS,
     PADDLE_HEIGHT,
+    PADDLE_LEFTS,
     PADDLE_START_Y,
+    PADDLE_WIDTH,
     SERVE_DELAY_STEPS,
     WINNING_SCORE,
     App,
@@ -57,6 +60,21 @@ class GameModelTests(unittest.TestCase):
         self.model.step(1, 0)
         self.assertEqual(self.model.ball_y, center_at_contact)
         self.assertAlmostEqual(self.model.ball_dy, 0)
+
+    def test_moving_paddle_does_not_overlap_ball_after_bounce(self):
+        self.model.reset(5)
+        self.set_ball(35, 227, -5, 0)
+        self.model.step(1, 0)
+        corner_x = PADDLE_LEFTS[0] + PADDLE_WIDTH
+        corner_y = self.model.paddle_y[0] + PADDLE_HEIGHT
+        distance = math.hypot(
+            self.model.ball_x - corner_x, self.model.ball_y - corner_y
+        )
+        self.assertGreater(self.model.ball_dx, 0)
+        self.assertGreaterEqual(distance, BALL_RADIUS - 1e-9)
+        self.assertAlmostEqual(
+            math.hypot(self.model.ball_dx, self.model.ball_dy), 5.5
+        )
 
     def test_ball_can_hit_wall_and_paddle_in_same_step(self):
         self.model.paddle_y[0] = 0
@@ -126,6 +144,18 @@ class AppTests(unittest.TestCase):
             self.app._set_state("playing")
             self.app._tick()
         self.app.model.step.assert_called_once_with(-1, 1)
+
+    def test_space_on_button_does_not_repeat_tkinter_action(self):
+        self.app.window_system = "win32"
+        self.app._toggle_pause = Mock()
+        event = Mock(keysym="space", keycode=32, widget=Mock(spec=ttk.Button))
+        self.app._key_pressed(event)
+        self.app._toggle_pause.assert_not_called()
+
+        self.app._key_released(event)
+        event.widget = Mock()
+        self.app._key_pressed(event)
+        self.app._toggle_pause.assert_called_once_with()
 
     def test_focus_change_within_window_does_not_pause(self):
         self.app.root.focus_get.return_value = Mock()

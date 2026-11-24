@@ -1,3 +1,7 @@
+"""Запустите пинг-понг для двух игроков командой python main.py.
+
+GameModel ведёт матч, GameRenderer рисует поле, App управляет окном.
+"""
 
 import math
 import random
@@ -51,7 +55,7 @@ FONT_FAMILY = "Century Gothic"
 
 
 class GameModel:
-    """Храните состояние матча и рассчитывайте движение объектов."""
+    """Хранит состояние матча и рассчитывает движение объектов."""
 
     def __init__(self):
         """Подготовьте матч со средней сложностью."""
@@ -64,24 +68,35 @@ class GameModel:
         self.winner = None
         self.paddle_y = [PADDLE_START_Y] * 2
         self.serve_steps_remaining = 0
+        # В начале матча жребий определяет сторону первой подачи.
         self._serve(random.choice((-1, 1)))
 
     def _serve(self, direction):
+        """Подайте мяч из центра влево (-1) или вправо (+1)."""
         self.ball_x = FIELD_WIDTH / 2
         self.ball_y = FIELD_HEIGHT / 2
         self.ball_speed = self.start_speed
+        # Знак угла задаёт наклон вверх или вниз. Функции sin и cos
+        # принимают радианы, поэтому переводим градусы в радианы.
         angle = math.radians(random.choice((-18, 18)))
+        # Косинус даёт скорость по X, синус — по Y. Знак direction
+        # выбирает, к какой ракетке полетит мяч.
         self.ball_dx = direction * self.ball_speed * math.cos(angle)
         self.ball_dy = self.ball_speed * math.sin(angle)
 
     def step(self, left_direction, right_direction):
-        """Продвиньте матч на один кадр с учётом движения обеих ракеток."""
+        """Продвиньте матч на один фиксированный шаг.
+
+        Каждое направление равно -1 для движения вверх, 0 для
+        остановки или 1 для движения вниз.
+        """
         if self.winner is not None:
             return
 
         paddle_starts = self.paddle_y.copy()
         for player, direction in enumerate((left_direction, right_direction)):
             new_y = self.paddle_y[player] + direction * PADDLE_SPEED
+            # Верх ракетки ограничен нулём, низ — высотой поля.
             self.paddle_y[player] = min(
                 FIELD_HEIGHT - PADDLE_HEIGHT, max(0, new_y)
             )
@@ -90,19 +105,31 @@ class GameModel:
             self.serve_steps_remaining -= 1
             return
 
+        # За единицу времени принимаем один шаг. После отскока ищем
+        # следующее столкновение на оставшейся части того же шага.
         elapsed = 0.0
         while elapsed < 1:
             target = 0 if self.ball_dx < 0 else 1
             paddle_dy = self.paddle_y[target] - paddle_starts[target]
             paddle_top = paddle_starts[target] + elapsed * paddle_dy
-            wall_y = BALL_RADIUS if self.ball_dy < 0 else FIELD_HEIGHT - BALL_RADIUS
+            wall_y = (
+                BALL_RADIUS if self.ball_dy < 0
+                else FIELD_HEIGHT - BALL_RADIUS
+            )
+            # До касания стены центр мяча проходит расстояние до
+            # линии, отстоящей от стены на радиус. Время равно пути,
+            # делённому на вертикальную скорость.
             wall_time = (
-                (wall_y - self.ball_y) / self.ball_dy if self.ball_dy else math.inf
+                (wall_y - self.ball_y) / self.ball_dy
+                if self.ball_dy else math.inf
             )
             remaining = 1 - elapsed
             paddle_time = self._paddle_contact_time(
                 target, paddle_top, paddle_dy, min(remaining, wall_time)
             )
+            # Выбираем первое событие или конец шага. Прибавляем
+            # к каждой координате скорость по этой оси, умноженную
+            # на прошедшее время.
             travel_time = min(remaining, wall_time, paddle_time)
             self.ball_x += self.ball_dx * travel_time
             self.ball_y += self.ball_dy * travel_time
@@ -112,23 +139,35 @@ class GameModel:
                 self.ball_y = wall_y
             if travel_time == paddle_time:
                 contact_top = paddle_top + paddle_dy * travel_time
-                self._bounce(target, self.ball_y - contact_top - PADDLE_HEIGHT / 2)
+                offset = self.ball_y - contact_top - PADDLE_HEIGHT / 2
+                self._bounce(target, offset)
             elif travel_time == wall_time:
                 self.ball_dy = -self.ball_dy
 
+        self._separate_from_paddle()
         if self.ball_x + BALL_RADIUS <= 0:
             self._score(1, -1)
         elif self.ball_x - BALL_RADIUS >= FIELD_WIDTH:
             self._score(0, 1)
 
     def _paddle_contact_time(self, player, top, paddle_dy, limit):
-        """Найдите первый контакт круга с ракеткой в её системе отсчёта."""
+        """Верните время первого касания или бесконечность.
+
+        player задаёт номер ракетки с нуля. top и paddle_dy задают
+        координату её верха и вертикальную скорость.
+        limit ограничивает поиск оставшимся временем до стены или
+        конца шага. Время измеряется в долях фиксированного шага.
+        """
         left = PADDLE_LEFTS[player]
         right = left + PADDLE_WIDTH
+        # Считаем верх ракетки началом отсчёта по Y. Вычитаем её
+        # скорость, чтобы найти движение мяча относительно ракетки.
         x, y = self.ball_x, self.ball_y - top
         dx, dy = self.ball_dx, self.ball_dy - paddle_dy
         if not dx:
             return math.inf
+        # Вертикальная грань. Центр мяча находится на расстоянии
+        # радиуса от грани и по высоте попадает в пределы ракетки.
         front = right + BALL_RADIUS if player == 0 else left - BALL_RADIUS
         front_time = (front - x) / dx
         if front_time > limit:
@@ -138,12 +177,18 @@ class GameModel:
         if 0 <= front_time and 0 <= y + dy * front_time <= PADDLE_HEIGHT:
             contact = front_time
 
+        # Для верхней и нижней граней проверяем положение по X
+        # в момент, когда центр мяча подходит к грани на радиус.
         if dy:
             edge_y = -BALL_RADIUS if dy > 0 else PADDLE_HEIGHT + BALL_RADIUS
             edge_time = (edge_y - y) / dy
             if 0 <= edge_time <= limit and left <= x + dx * edge_time <= right:
                 contact = min(contact, edge_time)
 
+        # Для угла приравниваем квадрат расстояния от центра мяча
+        # до угла к квадрату радиуса. Получаем квадратное уравнение
+        # по времени. Отрицательный дискриминант означает промах,
+        # нулевой — касание, положительный — пересечение окружности.
         speed_squared = dx * dx + dy * dy
         for corner_x, x_side in ((left, -1), (right, 1)):
             for corner_y, y_side in ((0, -1), (PADDLE_HEIGHT, 1)):
@@ -155,7 +200,11 @@ class GameModel:
                 )
                 if projection >= 0 or discriminant < 0:
                     continue
-                hit = (-projection - math.sqrt(discriminant)) / speed_squared
+                # Меньший корень даёт момент входа. Учитываем его
+                # только в наружной четверти окружности этого угла.
+                hit = (
+                    -projection - math.sqrt(discriminant)
+                ) / speed_squared
                 if (
                     0 <= hit <= limit
                     and (offset_x + dx * hit) * x_side >= 0
@@ -164,10 +213,36 @@ class GameModel:
                     contact = min(contact, hit)
         return contact
 
+    def _separate_from_paddle(self):
+        """Устраните перекрытие, если ракетка догнала уходящий мяч."""
+        if not self.ball_dx:
+            return
+        player = 0 if self.ball_dx > 0 else 1
+        left = PADDLE_LEFTS[player]
+        right = left + PADDLE_WIDTH
+        top = self.paddle_y[player]
+        bottom = top + PADDLE_HEIGHT
+        distance_x = max(left - self.ball_x, self.ball_x - right, 0)
+        distance_y = max(top - self.ball_y, self.ball_y - bottom, 0)
+
+        # Сохраняем высоту и скорость мяча. Если ближайшая точка
+        # ракетки внутри круга, сдвигаем мяч к центру поля ровно
+        # настолько, чтобы между ракеткой и мячом осталось касание.
+        radius_squared = BALL_RADIUS ** 2
+        if distance_x ** 2 + distance_y ** 2 < radius_squared:
+            clearance = math.sqrt(radius_squared - distance_y ** 2)
+            self.ball_x = (
+                right + clearance if player == 0 else left - clearance
+            )
+
     def _bounce(self, player, offset):
-        # Попадание в центр даёт прямой отскок, попадание в край — до 60°.
+        """Отразите мяч от ракетки с учётом высоты попадания."""
+        # Делим смещение от центра на половину высоты ракетки:
+        # 0 означает центр, -1 и 1 — края. Ограничение диапазона
+        # удерживает угол в пределах ±60° даже при касании угла.
         relative_offset = max(-1, min(1, offset / (PADDLE_HEIGHT / 2)))
         angle = relative_offset * MAX_BOUNCE_ANGLE
+        # Прибавляем скорость за удар, но соблюдаем общий предел.
         self.ball_speed = min(MAX_BALL_SPEED, self.ball_speed + SPEED_GAIN)
         direction = 1 if player == 0 else -1
         self.ball_dx = direction * self.ball_speed * math.cos(angle)
@@ -184,7 +259,7 @@ class GameModel:
 
 
 class GameRenderer:
-    """Рисуйте поле, счёт и состояние матча на Canvas."""
+    """Рисует поле, счёт и состояние матча на Canvas."""
 
     def __init__(self, canvas):
         """Создайте постоянные элементы поля и подвижные объекты."""
@@ -207,7 +282,9 @@ class GameRenderer:
             center_x - 151, 2, center_x + 151, FIELD_TOP - 7,
             fill=PINK_SURFACE, outline=PINK_BORDER,
         )
-        canvas.create_line(center_x, 12, center_x, FIELD_TOP - 17, fill=PINK_BORDER)
+        canvas.create_line(
+            center_x, 12, center_x, FIELD_TOP - 17, fill=PINK_BORDER
+        )
         self.score_items = []
         for x, number, color in (
             (center_x - 75, 1, LEFT_COLOR),
@@ -226,7 +303,9 @@ class GameRenderer:
             canvas.create_rectangle(0, 0, 0, 0, fill=color, outline="")
             for color in (LEFT_COLOR, RIGHT_COLOR)
         ]
-        self.ball = canvas.create_oval(0, 0, 0, 0, fill=BALL_COLOR, outline=BALL_OUTLINE)
+        self.ball = canvas.create_oval(
+            0, 0, 0, 0, fill=BALL_COLOR, outline=BALL_OUTLINE
+        )
         center_y = FIELD_TOP + FIELD_HEIGHT / 2
         canvas.create_rectangle(
             center_x - 190, center_y - 48, center_x + 190, center_y + 48,
@@ -277,7 +356,7 @@ class GameRenderer:
 
 
 class App:
-    """Создайте окно и свяжите управление с игровым циклом."""
+    """Связывает окно, управление и игровой цикл."""
 
     def __init__(self, root):
         """Настройте интерфейс, привязки клавиш и обновление кадров."""
@@ -300,13 +379,15 @@ class App:
         self._tick()
 
     def _build_interface(self):
+        """Настройте внешний вид и разместите элементы окна."""
         self.root.option_add("*TCombobox*Listbox.font", (FONT_FAMILY, 10))
         style = ttk.Style(self.root)
         style.theme_use("clam")
         style.configure(
             "TButton", font=(FONT_FAMILY, 10, "bold"), padding=(13, 7),
             background=PINK_BUTTON, foreground=TEXT, bordercolor=PINK_BORDER,
-            lightcolor=PINK_BORDER, darkcolor=PINK_BORDER, focuscolor="#87566b",
+            lightcolor=PINK_BORDER, darkcolor=PINK_BORDER,
+            focuscolor="#87566b",
         )
         button_colors = [
             ("disabled", PINK_DISABLED), ("pressed", PINK_PRESSED),
@@ -325,7 +406,9 @@ class App:
         style.map(
             "TCombobox",
             background=button_colors,
-            fieldbackground=[("disabled", PINK_DISABLED), ("readonly", PINK_SURFACE)],
+            fieldbackground=[
+                ("disabled", PINK_DISABLED), ("readonly", PINK_SURFACE),
+            ],
             foreground=[("disabled", MUTED)],
             selectbackground=[("readonly", PINK_SURFACE)],
             selectforeground=[("readonly", TEXT)],
@@ -408,6 +491,7 @@ class App:
         self._set_state(next_state)
 
     def _set_state(self, state):
+        """Переключите состояние и начните отсчёт времени заново."""
         self.state = state
         self._last_tick_ns = time.monotonic_ns()
         self._pending_ns = 0
@@ -428,6 +512,7 @@ class App:
         self.renderer.draw(self.model, self.state)
 
     def _game_key(self, event):
+        """Приведите русские и английские клавиши к общим именам."""
         key = event.keysym.lower()
         if self.window_system == "win32":
             key = WINDOWS_LETTER_KEYS.get(event.keycode, key)
@@ -440,14 +525,15 @@ class App:
         if key == "r":
             self._reset()
         self.pressed_keys.add(key)
-        if key == "space":
+        # Кнопка Tkinter уже выполнила своё действие по пробелу.
+        if key == "space" and not isinstance(event.widget, ttk.Button):
             self._toggle_pause()
 
     def _key_released(self, event):
         self.pressed_keys.discard(self._game_key(event))
 
-    def _focus_lost(self, event):
-        # Дождитесь завершения смены фокуса, в том числе между виджетами.
+    def _focus_lost(self, _event):
+        # Ждём завершения смены фокуса, в том числе между виджетами.
         self.root.after_idle(self._pause_if_unfocused)
 
     def _pause_if_unfocused(self):
@@ -458,6 +544,9 @@ class App:
             self._set_state("paused")
 
     def _tick(self):
+        """Продвиньте модель по времени и запланируйте новый вызов."""
+        # Монотонные часы измеряют интервалы без скачков при смене
+        # системного времени.
         now = time.monotonic_ns()
         elapsed = now - self._last_tick_ns
         self._last_tick_ns = now
@@ -470,6 +559,10 @@ class App:
                 int("down" in self.pressed_keys)
                 - int("up" in self.pressed_keys)
             )
+            # Копим время между вызовами. Каждый шаг модели равен
+            # 16 мс, поэтому можно наверстать задержку отрисовки
+            # несколькими шагами. Ограничение защищает интерфейс
+            # от долгих вычислений после большой задержки.
             self._pending_ns = min(
                 self._pending_ns + elapsed, MAX_CATCH_UP_STEPS * FRAME_NS
             )
@@ -482,6 +575,7 @@ class App:
             if self.state == "playing":
                 self.renderer.draw(self.model, self.state)
 
+        # after() отдаёт управление Tkinter до следующего вызова.
         self.frame_id = self.root.after(FRAME_MS, self._tick)
 
     def _close(self):
